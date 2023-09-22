@@ -26,50 +26,60 @@ class ReportGenerateTask(Task):
         pass
 
     def run(self, report_id):
-        report = SESSION.query(Report).where(Report.id == report_id).first()
-        all_stores = SESSION.query(StoreTimezone).limit(300).all()
-        store_timezone = {i.store_id: i.timezone_str for i in all_stores}
+        try:
+            report = SESSION.query(Report).where(Report.id == report_id).first()
+            all_stores = SESSION.query(StoreTimezone).all()
+            store_timezone = {i.store_id: i.timezone_str for i in all_stores}
 
-        all_batch_store_ids = batch([i.store_id for i in all_stores], 500)
-        current_time = datetime(2023, 1, 25, 18, 13, 22, 479220)
-        final_data = []
-        for batch_store_ids in all_batch_store_ids:
-            business_hours = self.get_business_hours(store_ids=batch_store_ids)
-            store_status = self.get_store_status(store_ids=batch_store_ids)
-            for _store_id in batch_store_ids:
-                _data = {}
-                uptime = self.get_uptime_or_downtime(
-                    current_time=current_time,
-                    business_hours=business_hours.get(_store_id, []),
-                    store_status=store_status.get(_store_id, []),
-                    tzone=store_timezone.get(_store_id, "America/Chicago"),
-                    status_type="uptime",
-                )
-                downtime = self.get_uptime_or_downtime(
-                    current_time=current_time,
-                    business_hours=business_hours.get(_store_id, []),
-                    store_status=store_status.get(_store_id, []),
-                    tzone=store_timezone.get(_store_id, "America/Chicago"),
-                    status_type="downtime",
-                )
-                _data["store_id"] = _store_id
-                _data["uptime_last_hour(in minutes)"] = uptime.get("last_hour")*60
-                _data["uptime_last_day(in hours)"] = uptime.get("last_day")
-                _data["uptime_last_week(in hours)"] = uptime.get("last_week")
-                _data["downtime_last_hour(in minutes)"] = downtime.get("last_hour")*60
-                _data["downtime_last_day(in hours)"] = downtime.get("last_day")
-                _data["downtime_last_week(in hours)"] = downtime.get("last_week")
-                final_data.append(_data)
-        df = pd.DataFrame(final_data)
-        file_path = f"Static/Report_{report_id}.csv"
-        df.to_csv(file_path, header=True, index=None)
+            all_batch_store_ids = batch([i.store_id for i in all_stores], 500)
+            current_time = datetime(2023, 1, 25, 18, 13, 22, 479220)
+            final_data = []
+            for batch_store_ids in all_batch_store_ids:
+                business_hours = self.get_business_hours(store_ids=batch_store_ids)
+                store_status = self.get_store_status(store_ids=batch_store_ids)
+                for _store_id in batch_store_ids:
+                    _data = {}
+                    uptime = self.get_uptime_or_downtime(
+                        current_time=current_time,
+                        business_hours=business_hours.get(_store_id, []),
+                        store_status=store_status.get(_store_id, []),
+                        tzone=store_timezone.get(_store_id, "America/Chicago"),
+                        status_type="uptime",
+                    )
+                    downtime = self.get_uptime_or_downtime(
+                        current_time=current_time,
+                        business_hours=business_hours.get(_store_id, []),
+                        store_status=store_status.get(_store_id, []),
+                        tzone=store_timezone.get(_store_id, "America/Chicago"),
+                        status_type="downtime",
+                    )
+                    _data["store_id"] = _store_id
+                    _data["uptime_last_hour(in minutes)"] = uptime.get("last_hour") * 60
+                    _data["uptime_last_day(in hours)"] = uptime.get("last_day")
+                    _data["uptime_last_week(in hours)"] = uptime.get("last_week")
+                    _data["downtime_last_hour(in minutes)"] = (
+                        downtime.get("last_hour") * 60
+                    )
+                    _data["downtime_last_day(in hours)"] = downtime.get("last_day")
+                    _data["downtime_last_week(in hours)"] = downtime.get("last_week")
+                    final_data.append(_data)
+            df = pd.DataFrame(final_data)
+            file_path = f"Static/Report_{report_id}.csv"
+            df.to_csv(file_path, header=True, index=None)
 
-        report.status = "Complete"
-        report.file = file_path
+            report.status = "Complete"
+            report.file = file_path
 
-        SESSION.add(report)
-        SESSION.commit()
+            SESSION.add(report)
+            SESSION.commit()
+        except Exception as e:
+            print(e)
+            report.status = "Failed"
+            SESSION.add(report)
+            SESSION.commit()
+
         SESSION.close()
+        return True
 
     def get_store_status(self, store_ids):
         store_status = (
@@ -134,7 +144,9 @@ class ReportGenerateTask(Task):
 
     def is_in_business_hours(self, _timestamp, business_hours, tzone):
         tz = timezone(tzone)
-        day_business_hour = [i for i in business_hours if i["day"]==_timestamp.weekday()]
+        day_business_hour = [
+            i for i in business_hours if i["day"] == _timestamp.weekday()
+        ]
 
         if day_business_hour:
             for row in business_hours:
@@ -154,17 +166,13 @@ class ReportGenerateTask(Task):
                     .time()
                 )
 
-                if (
-                    start_time_utc <= _timestamp.time() <= end_time_utc
-                ):
+                if start_time_utc <= _timestamp.time() <= end_time_utc:
                     return True
         else:
-            start_time_utc = time(0, 0, 0)  
+            start_time_utc = time(0, 0, 0)
             end_time_utc = time(23, 59, 59)
-            if (
-                    start_time_utc <= _timestamp.time() <= end_time_utc
-                ):
-                    return True
+            if start_time_utc <= _timestamp.time() <= end_time_utc:
+                return True
         return False
 
 
